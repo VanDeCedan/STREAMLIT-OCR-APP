@@ -37,13 +37,12 @@ def crop_card(image_input, conf_threshold=0.25):
             cropped_imgs.append(crop)
     return cropped_imgs
 
-def deskew_image(img, angles=None, device='cpu', confidence_threshold=0.5):
+def deskew_image(img, confidence_threshold=0.5):
     """
     Deskew a single cropped image (numpy array) and return the deskewed PIL image, predicted angle, and confidence.
     Always returns a tuple of three values.
     """
-    if angles is None:
-        angles = [0, 45, 90, 135, 180, 225, 270, 315]
+    angles = [0, 45, 90, 135, 180, 225, 270, 315]
     angle_to_class = {angle: idx for idx, angle in enumerate(angles)}
     class_to_angle = {idx: angle for angle, idx in angle_to_class.items()}
     pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).convert('RGB')
@@ -53,9 +52,10 @@ def deskew_image(img, angles=None, device='cpu', confidence_threshold=0.5):
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_tensor = transform(pil_img).unsqueeze(0).to(device)
 
-    model = load_deskew_model(device=device,angles=angles)
+    model = load_deskew_model()
 
     with torch.no_grad():
         outputs = model(input_tensor)
@@ -75,7 +75,7 @@ def deskew_image(img, angles=None, device='cpu', confidence_threshold=0.5):
     else:
         return None, predicted_angle, confidence
 
-def classify_card(img, device='cpu', image_size=(50, 50)):
+def classify_card(img, image_size=(50, 50)):
     """
     Predict the card class for a cropped image (numpy array) and return the predicted class.
     """
@@ -92,7 +92,8 @@ def classify_card(img, device='cpu', image_size=(50, 50)):
     img_tensor = torch.from_numpy(img_resize).permute(2, 0, 1).float() / 255.0
     img_tensor = img_tensor.unsqueeze(0)
 
-    model = load_class_model(device=device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_class_model()
 
     with torch.no_grad():
         img_tensor = img_tensor.to(device)

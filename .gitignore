@@ -4,5 +4,6 @@ __pycache__/
 *.pyd
 .env
 myenv/
+models/
 .env/
 .DS_Store

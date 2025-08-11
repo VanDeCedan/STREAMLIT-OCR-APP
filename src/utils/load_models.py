@@ -4,7 +4,10 @@ from paddleocr import TextRecognition
 from torch import nn
 import torch.nn.functional as F_nn
 from torchvision import models
+import os
+from huggingface_hub import hf_hub_download
 
+# === Modèles de Deep Learning ===
 class ResNet18Classification(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
@@ -37,28 +40,24 @@ class CardClassifier(nn.Module):
         x = self.fc2(x)  # Match 'softmax' from TensorFlow
         return x
 
+# === Fonctions de chargement des modèles ===
 def load_crop_model():
-    model_path = "../models/card_cropper.pt"
+    model_path = hf_hub_download(
+        repo_id="Nicias/card_cropper",  # ton repo Hugging Face
+        filename="card_cropper_v1.pt"           # nom exact du fichier dans le repo
+    )
     crop_model = YOLO(model_path)
     return crop_model
 
-def load_deskew_model(device='cpu',angles=None):
-    # Default angles ()
-    if angles is None:
-        angles = [0,45,90,135,180,225,270,315]
-    
-    # Create angle to class mapping
-    model_path = "../models/card_deskewer.pth"
-    
-    # Load and initialize the model
-    model = ResNet18Classification(num_classes=len(angles))
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    model.to(device)
-    return model
+import torch
+from huggingface_hub import hf_hub_download
 
-def load_class_model(device='cpu'):
-    model_path = "../models/card_classifier.pth"
+def load_class_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_path = hf_hub_download(
+        repo_id="Nicias/card_classifier",
+        filename="card_classifier_v1.pth"
+    )
 
     model = CardClassifier(num_classes=4)
     model.load_state_dict(torch.load(model_path, map_location=device))
@@ -66,14 +65,33 @@ def load_class_model(device='cpu'):
     model.eval()
     return model
 
+
+def load_deskew_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    angles = [0,45,90,135,180,225,270,315]
+
+    model_path = hf_hub_download(
+        repo_id="Nicias/card_deskewer",
+        filename="card_deskewer_v1.pth"
+    )
+
+    model = ResNet18Classification(num_classes=len(angles))
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    model.to(device)
+    return model
+
+
 def load_bio_text_model():
-    model_path = "../models/rec_bio_text.pt"
+    model_path = hf_hub_download(
+        repo_id="Nicias/rec_bio_text_boxes",
+        filename="rec_bio_text_v1.pt"
+    )
     model = YOLO(model_path)
     return model
 
 def load_ocr_model():
-    model_dir = "../models/PP-OCRv5_server_rec"
     model_name = "PP-OCRv5_server_rec"
     # Initialize the text recognizer with the model directory and name
-    recognizer = TextRecognition(model_name=model_name ,model_dir=model_dir)
+    recognizer = TextRecognition(model_name=model_name)
     return recognizer
