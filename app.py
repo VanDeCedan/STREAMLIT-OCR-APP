@@ -1,7 +1,7 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
 from PIL import Image
-from src.utils import pipeline_module
+from src import pipeline_module
 
 
 st.title("Extraction d'informations de cartes biométriques")
