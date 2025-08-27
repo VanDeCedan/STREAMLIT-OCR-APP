@@ -43,7 +43,7 @@ def process_images_to_excel_pil(pil_images):
         return None, len(pil_images), 0, len(pil_images)
 
 # === Génération du fichier de demande de paiement ===
-def gen_demande_paiement(df, nom_activite, output_xlsx="paiement.xlsx"):
+def gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx="paiement.xlsx"):
     """
     Génère un fichier Excel de demande de paiement à partir d'un DataFrame et d'un titre d'activité.
     """
@@ -131,9 +131,13 @@ def gen_demande_paiement(df, nom_activite, output_xlsx="paiement.xlsx"):
     ws.row_dimensions[total_row].height = 15
 
     # 5. Signature row
+
     signature_row = total_row + 2
     ws.cell(row=signature_row, column=2, value="Le Demandeur").font = signature_font
     ws.cell(row=signature_row, column=5, value="Le Superviseur").font = signature_font
+    # Ajout des valeurs sous les cellules
+    ws.cell(row=signature_row+1, column=2, value=demandeur).font = value_font
+    ws.cell(row=signature_row+1, column=5, value=superviseur).font = value_font
 
     # 6. Add grid to the table area
     thin = Side(border_style="thin", color="000000")
