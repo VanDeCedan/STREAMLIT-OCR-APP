@@ -1,268 +1,32 @@
-import numpy as np
-import pandas as pd
 import io
-from io import BytesIO
-from PIL import Image
-import os
-import cv2
-
-import torch
-from torch import nn
-from torchvision import transforms, models
-import torch.nn.functional as F_nn
-
-from paddleocr import TextRecognition
-from ultralytics import YOLO
-from huggingface_hub import hf_hub_download
-
-import streamlit as st
-
-# === Définir l'architecture des modèles ===
-class ResNet18Classification(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.backbone = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-        self.backbone.fc = nn.Linear(self.backbone.fc.in_features, num_classes)
-
-    def forward(self, x):
-        return self.backbone(x)
-
-class CardClassifier(nn.Module):
-    def __init__(self, num_classes=4):
-        super(CardClassifier, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(128 * 6 * 6, 512)
-        self.fc2 = nn.Linear(512, num_classes)
-
-    def forward(self, x):
-        x = F_nn.relu(self.conv1(x))     # [B, 32, 50, 50] → [B, 32, 25, 25]
-        x = self.pool(x)
-        x = F_nn.relu(self.conv2(x))     # [B, 64, 25, 25] → [B, 64, 12, 12]
-        x = self.pool(x)
-        x = F_nn.relu(self.conv3(x))     # [B, 128, 12, 12] → [B, 128, 6, 6]
-        x = self.pool(x)
-        x = self.flatten(x)           # [B, 128*6*6]
-        x = F_nn.relu(self.fc1(x))
-        x = self.fc2(x)  # Match 'softmax' from TensorFlow
-        return x
-
-# === Fonctions de chargement des modèles ===
-@st.cache_resource
-def load_crop_model():
-    model_path = hf_hub_download(
-        repo_id="Nicias/card_cropper",  # ton repo Hugging Face
-        filename="card_cropper_v1.pt"           # nom exact du fichier dans le repo
-    )
-    crop_model = YOLO(model_path)
-    return crop_model
-
-@st.cache_resource
-def load_class_model():
-    device = torch.device("cpu")
-    model_path = hf_hub_download(
-        repo_id="Nicias/card_classifier",
-        filename="card_classifier_v1.pth"
-    )
-
-    model = CardClassifier(num_classes=4)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model = model.to(device)
-    model.eval()
-    return model
-
-@st.cache_resource
-def load_deskew_model():
-    device = torch.device("cpu")
-    angles = [0,45,90,135,180,225,270,315]
-
-    model_path = hf_hub_download(
-        repo_id="Nicias/card_deskewer",
-        filename="card_deskewer_v1.pth"
-    )
-
-    model = ResNet18Classification(num_classes=len(angles))
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    model.to(device)
-    return model
-
-@st.cache_resource
-def load_bio_text_model():
-    model_path = hf_hub_download(
-        repo_id="Nicias/rec_bio_text_boxes",
-        filename="rec_bio_text_v1.pt"
-    )
-    model = YOLO(model_path)
-    return model
-
-@st.cache_resource
-def load_ocr_model():
-    model_name = "PP-OCRv5_server_rec"
-    # Initialize the text recognizer with the model directory and name
-    recognizer = TextRecognition(model_name=model_name)
-    return recognizer
-
-# === Fonctions du pipeline ===
-def crop_card(image_input, conf_threshold=0.25):
-    """
-    Crop card from image and return list of cropped images (as numpy arrays).
-    Accepts either a file path (str) or a PIL Image.
-    """
-    model = load_crop_model()
-    # Si c'est un chemin, on lit normalement
-    if isinstance(image_input, str):
-        image = cv2.imread(image_input)
-        results = model.predict(source=image_input, save=False, conf=conf_threshold)
-    # Si c'est une image PIL, on convertit en numpy array et on passe l'image directement
-    elif isinstance(image_input, Image.Image):
-        image = cv2.cvtColor(np.array(image_input), cv2.COLOR_RGB2BGR)
-        results = model.predict(source=image, save=False, conf=conf_threshold)
-    else:
-        raise ValueError("image_input must be a file path or PIL Image")
-    boxes = results[0].boxes
-    cropped_imgs = []
-    if boxes is not None and len(boxes) > 0:
-        coords = boxes.xyxy.cpu().numpy()
-        classes = boxes.cls.cpu().numpy().astype(int)
-        for i, (box, cls_id) in enumerate(zip(coords, classes)):
-            x1, y1, x2, y2 = map(int, box)
-            crop = image[y1:y2, x1:x2]
-            cropped_imgs.append(crop)
-    return cropped_imgs
-
-def deskew_image(img, confidence_threshold=0.5):
-    """
-    Deskew a single cropped image (numpy array) and return the deskewed PIL image, predicted angle, and confidence.
-    Always returns a tuple of three values.
-    """
-    angles = [0, 45, 90, 135, 180, 225, 270, 315]
-    angle_to_class = {angle: idx for idx, angle in enumerate(angles)}
-    class_to_angle = {idx: angle for angle, idx in angle_to_class.items()}
-    pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB)).convert('RGB')
-
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_tensor = transform(pil_img).unsqueeze(0).to(device)
-
-    model = load_deskew_model()
-
-    with torch.no_grad():
-        outputs = model(input_tensor)
-        probabilities = torch.softmax(outputs, dim=1)
-        predicted_class = torch.argmax(outputs, 1).item()
-        predicted_angle = class_to_angle[predicted_class]
-        confidence = probabilities[0, predicted_class].item()
-
-    deskew_angle = predicted_angle
-    deskewed_img = pil_img.rotate(-deskew_angle, expand=True)
-    gray = deskewed_img.convert("L")
-    bbox = gray.getbbox()
-    if bbox:
-        deskewed_img = deskewed_img.crop(bbox)
-    if confidence >= confidence_threshold:
-        return deskewed_img, predicted_angle, confidence
-    else:
-        return None, predicted_angle, confidence
-
-def classify_card(img, image_size=(50, 50)):
-    """
-    Predict the card class for a cropped image (numpy array) and return the predicted class.
-    """
-    class_labels = ['CARTE BIOMETRIQUE', 'CARTE CIP', 'CNI', 'PASSEPORT']
-    # Convert numpy image to RGB if needed
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img_resize = cv2.resize(img, image_size)
-    img_tensor = torch.from_numpy(img_resize).permute(2, 0, 1).float() / 255.0
-    img_tensor = img_tensor.unsqueeze(0)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_class_model()
-
-    with torch.no_grad():
-        img_tensor = img_tensor.to(device)
-        outputs = model(img_tensor)
-        predicted_class = torch.argmax(outputs, 1)
-        return class_labels[predicted_class.item()]
-
-def rec_carte_bio_text_boxes(pil_img, conf_threshold=0.25):
-    """
-    Detect and crop text boxes from deskewed PIL image, return dict of class->PIL image.
-    """
-    temp_path = "_temp_text_img.jpg"
-    pil_img.save(temp_path)
-    model = load_bio_text_model()
-    image = cv2.imread(temp_path)
-    results = model.predict(source=temp_path, save=False, conf=conf_threshold)
-    boxes = results[0].boxes
-    text_boxes = {}
-    if boxes is not None and len(boxes) > 0:
-        coords = boxes.xyxy.cpu().numpy()
-        classes = boxes.cls.cpu().numpy().astype(int)
-        for i, (box, cls_id) in enumerate(zip(coords, classes)):
-            x1, y1, x2, y2 = map(int, box)
-            crop = image[y1:y2, x1:x2]
-            class_name = model.names[cls_id].lower()
-            text_boxes[class_name] = Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-    os.remove(temp_path)
-    return text_boxes
-
-def ocr_text(text_boxes):
-    """
-    Extract text from an image using PP-OCRv5 server model.
-    """
-    fields = {"nom": None, "prenom": None, "date_expiration": None, "numero_carte": None}
-    recognizer = load_ocr_model()
-    for field in fields.keys():
-        box_img = text_boxes.get(field)
-        if box_img:
-            # Save to buffer for OCR
-            buf = BytesIO()
-            box_img.save(buf, format='JPEG')
-            buf.seek(0)
-            temp_path = "_temp_ocr_img.jpg"
-            with open(temp_path, "wb") as f:
-                f.write(buf.read())
-            output = recognizer.predict(input=temp_path)
-            if output and len(output) > 0:
-                fields[field] = output[0].get('rec_text')
-            os.remove(temp_path)
-    return fields
+import pandas as pd
+import src.modules as modules
+# Ajout des imports nécessaires pour la génération Excel
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side
+from datetime import datetime
 
 # === Pipeline principal ===
 def pipeline_predict_texts_pil(pil_image):
     # 1. Crop
-    cropped_imgs = crop_card(pil_image)
+    cropped_imgs = modules.crop_card(pil_image)
     if not cropped_imgs:
         return None
     cropped_img = cropped_imgs[0]
     # 2. Deskew
-    deskewed_img, angle, conf = deskew_image(cropped_img)
+    deskewed_img, angle, conf = modules.deskew_image(cropped_img)
     if deskewed_img is None:
         return None
     # 3. Classify
-    card_class = classify_card(cropped_img)
-    if card_class != "CARTE BIOMETRIQUE":
-        return None
+    card_class = modules.classify_card(cropped_img)
     # 4. Extract text boxes
-    text_boxes = rec_carte_bio_text_boxes(deskewed_img)
+    text_boxes = modules.rec_text(deskewed_img)
     if not text_boxes:
         return None
     # 5. Recognize text
-    fields = ocr_text(text_boxes)
+    fields = modules.ocr_text(text_boxes)
+    # Ajoute la classe prédite au dictionnaire des champs
+    fields["card_class"] = card_class
     return fields
 
 # === Traitement batch pour Streamlit ===
@@ -270,13 +34,117 @@ def process_images_to_excel_pil(pil_images):
     results = []
     for pil_image in pil_images:
         infos = pipeline_predict_texts_pil(pil_image)
-        if infos is not None and all(x is not None and x != '' for x in infos.values()):
+        if infos is not None and all(x is not None and x != '' for k, x in infos.items() if k != "card_class"):
             results.append(infos)
     if results:
         df = pd.DataFrame(results)
-        output = io.BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
-        return output, len(pil_images), len(results), len(pil_images) - len(results)
+        return df, len(pil_images), len(results), len(pil_images) - len(results)
     else:
         return None, len(pil_images), 0, len(pil_images)
+
+# === Génération du fichier de demande de paiement ===
+def gen_demande_paiement(df, nom_activite, output_xlsx="paiement.xlsx"):
+    """
+    Génère un fichier Excel de demande de paiement à partir d'un DataFrame et d'un titre d'activité.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+
+    # Font definitions
+    header_font = Font(name="aparijata", size=26, bold=True)
+    label_font = Font(name="aparijata", size=12, bold=True)
+    value_font = Font(name="aparijata", size=12)
+    table_header_font = Font(name="aparijata", size=12, bold=True)
+    table_font = Font(name="aparijata", size=12)
+    signature_font = Font(name="aparijata", size=16, bold=True)
+
+    # Set column widths
+    ws.column_dimensions["A"].width = 9
+    ws.column_dimensions["B"].width = 50
+    ws.column_dimensions["C"].width = 20
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 20
+    ws.column_dimensions["F"].width = 20
+
+    # 1. Title row
+    ws.merge_cells("A1:F1")
+    ws["A1"] = "DEMANDE DE PAIEMENT ELECTRONIQUE"
+    ws["A1"].font = header_font
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 35
+
+    # 3. Date row
+    ws["A3"] = "DATE :"
+    ws["A3"].font = label_font
+    ws["B3"] = datetime.today().strftime("%d/%m/%Y")
+    ws["B3"].font = value_font
+    ws.row_dimensions[3].height = 15
+
+    # 4. Operateur row
+    ws["A4"] = "OPERATEUR CHOISI :"
+    ws["A4"].font = label_font
+    ws["B4"] = "MTN"
+    ws["B4"].font = value_font
+    ws.row_dimensions[4].height = 15
+
+    # 5. Motif row
+    ws["A5"] = "MOTIF :"
+    ws["A5"].font = label_font
+    ws["B5"] = nom_activite
+    ws["B5"].font = value_font
+    ws.row_dimensions[5].height = 15
+
+    # 7. Table headers (row 7)
+    table_headers = [
+        "N°",
+        "NOM ET PRENOMS",
+        "N° TELEPHONE",
+        "PERDIEM",
+        "FRAIS DE RETRAIT",
+        "TOTAL A PAYER",
+    ]
+    for col, header in enumerate(table_headers, 1):
+        cell = ws.cell(row=7, column=col, value=header)
+        cell.font = table_header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # == Write the data into the Excel file ==
+    # 1: Add numbered column to the DataFrame
+    df = df.copy()
+    df.insert(0, "N°", range(1, len(df) + 1))
+
+    # 2 : merge columns "nom" et "prenom" en "NOM ET PRENOMS" (ou utiliser NOM_PRENOMS si déjà présent)
+    if "NOM_PRENOMS" in df.columns:
+        df["NOM ET PRENOMS"] = df["NOM_PRENOMS"]
+    else:
+        df["NOM ET PRENOMS"] = df["nom"] + " " + df["prenom"]
+
+    # 3. Data rows (remplir uniquement les deux premières colonnes)
+    for idx, row in enumerate(df[["N°", "NOM ET PRENOMS"]].itertuples(index=False), start=8):
+        ws.cell(row=idx, column=1, value=row[0]).font = table_font
+        ws.cell(row=idx, column=2, value=row[1]).font = table_font
+        ws.row_dimensions[idx].height = 15
+
+    # 4. Total row
+    total_row = 8 + len(df)
+    ws.cell(row=total_row, column=3, value="TOTAL").font = table_header_font
+    ws.row_dimensions[total_row].height = 15
+
+    # 5. Signature row
+    signature_row = total_row + 2
+    ws.cell(row=signature_row, column=2, value="Le Demandeur").font = signature_font
+    ws.cell(row=signature_row, column=5, value="Le Superviseur").font = signature_font
+
+    # 6. Add grid to the table area
+    thin = Side(border_style="thin", color="000000")
+    for row in ws.iter_rows(
+        min_row=7,
+        max_row=total_row,
+        min_col=1,
+        max_col=6,
+    ):
+        for cell in row:
+            cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+    wb.save(output_xlsx)
+    print(f"File saved as {output_xlsx}")
