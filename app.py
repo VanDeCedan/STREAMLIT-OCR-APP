@@ -69,7 +69,7 @@ if choix_mode == "Demande de paiement":
                     if df is not None and not df.empty:
                         st.dataframe(df)
                         output_xlsx = "paiement.xlsx"
-                        pipeline_module.gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx=output_xlsx)
+                        pipeline_module.gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx)
                         with open(output_xlsx, "rb") as f:
                             st.download_button(
                                 label="📥 Télécharger la demande de paiement",
