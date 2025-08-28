@@ -1,6 +1,6 @@
 import streamlit as st
 from PIL import Image
-from src import pipeline_module
+from src.pipeline_module import process_images_to_text_pil
 from streamlit_option_menu import option_menu
 from src.gen_demande_momo import gen_momo_fr_card
 from src.gen_etat_pymt import create_etat_paiement_xlsx
@@ -80,7 +80,7 @@ if choix_mode == "Demande de paiement":
                 else:
                     pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
                     progress = st.progress(0, text="Extraction en cours...")
-                    df, total, success, failed = pipeline_module.process_images_to_text_pil(pil_images)
+                    df, total, success, failed = process_images_to_text_pil(pil_images)
                     progress.progress(100, text="Extraction terminée")
 
                     col1, col2, col3 = st.columns(3)
@@ -150,7 +150,7 @@ elif choix_mode == "Etat de paiement":
             else:
                 pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
                 progress = st.progress(0, text="Extraction en cours...")
-                df, total, success, failed = pipeline_module.process_images_to_excel_pil(pil_images)
+                df, total, success, failed = process_images_to_text_pil(pil_images)
                 progress.progress(100, text="Extraction terminée")
 
                 col1, col2, col3 = st.columns(3)
