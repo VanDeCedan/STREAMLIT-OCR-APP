@@ -4,7 +4,7 @@ from openpyxl.styles import Font, Alignment, Border, Side
 from datetime import datetime
 
 # === Génération du fichier de demande de paiement ===
-def gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx="paiement.xlsx"):
+def gen_momo_fr_card(df, nom_activite, demandeur, superviseur, output_xlsx="paiement.xlsx"):
     """
     Génère un fichier Excel de demande de paiement à partir d'un DataFrame et d'un titre d'activité.
     """
@@ -113,3 +113,4 @@ def gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx="
 
     wb.save(output_xlsx)
     print(f"File saved as {output_xlsx}")
+

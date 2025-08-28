@@ -2,7 +2,8 @@ import streamlit as st
 from PIL import Image
 from src import pipeline_module
 from streamlit_option_menu import option_menu
-from src.gen_file_from_card import gen_demande_paiement
+from src.gen_demande_momo import gen_momo_fr_card
+from src.gen_etat_pymt import create_etat_paiement_xlsx
 
 st.title("DATA TOOLBOX")
 
@@ -96,7 +97,7 @@ if choix_mode == "Demande de paiement":
                         df1.columns = [col.replace('_', ' ').capitalize() for col in df.columns]
                         st.dataframe(df1)
                         output_xlsx = "paiement.xlsx"
-                        gen_demande_paiement(df, nom_activite, demandeur, superviseur, output_xlsx)
+                        gen_momo_fr_card(df, nom_activite, demandeur, superviseur, output_xlsx)
 
                         with open(output_xlsx, "rb") as f:
                             def demand_payment_callback():
@@ -121,4 +122,64 @@ if choix_mode == "Demande de paiement":
             st.info("Cette fonctionnalité n'est pas encore implémentée.")
 
 elif choix_mode == "Etat de paiement":
-    st.info("Cette fonctionnalité n'est pas encore implémentée.")
+    st.subheader("Génération de l'état de paiement")
+    col1, col2 = st.columns(2)
+    with col1:
+        titre_activite = st.text_input("Titre de l'activité")
+        lieu_activite = st.text_input("Lieu de l'activité")
+    with col2:
+        date_activite = st.text_input("Date de l'activité (ex: 01/09/2025)")
+        date_paiement = st.text_input("Date de paiement (ex: 02/09/2025)")
+
+    uploaded_files = st.file_uploader("Choisissez une ou plusieurs images de pièce d'identité",
+                                      type=["jpg", "jpeg", "png"],
+                                      accept_multiple_files=True)
+
+    if uploaded_files:
+        st.write(f"{len(uploaded_files)} image(s) chargée(s)")
+
+        if st.button("Extraire les informations (état de paiement)"):
+            if not titre_activite.strip():
+                st.error("Veuillez renseigner le titre de l'activité.")
+            elif not lieu_activite.strip():
+                st.error("Veuillez renseigner le lieu de l'activité.")
+            elif not date_activite.strip():
+                st.error("Veuillez renseigner la date de l'activité.")
+            elif not date_paiement.strip():
+                st.error("Veuillez renseigner la date de paiement.")
+            else:
+                pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
+                progress = st.progress(0, text="Extraction en cours...")
+                df, total, success, failed = pipeline_module.process_images_to_excel_pil(pil_images)
+                progress.progress(100, text="Extraction terminée")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.info(f"Total images analysées : {total}")
+                with col2:
+                    st.success(f"Traitée avec succès : {success}")
+                with col3:
+                    st.warning(f"Erronés : {failed}")
+
+                if df is not None and not df.empty:
+                    df1 = df.copy()
+                    df1.columns = [col.replace('_', ' ').capitalize() for col in df.columns]
+                    st.dataframe(df1)
+                    output_xlsx = "etat_paiement.xlsx"
+                    create_etat_paiement_xlsx(df, output_xlsx, titre_activite, date_activite, lieu_activite, date_paiement)
+                    with open(output_xlsx, "rb") as f:
+                        def etat_paiement_callback():
+                            @st.dialog("Success")
+                            def success_dialog():
+                                st.success("Le téléchargement a été réalisé !", icon="✅")
+                            st.session_state['choix_mode'] = None
+                            success_dialog()
+                        st.download_button(
+                            label="📥 Télécharger l'état de paiement",
+                            data=f,
+                            file_name=output_xlsx,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            on_click=etat_paiement_callback
+                        )
+                else:
+                    st.warning("Aucune information n'a pu être extraite des images chargées.")
