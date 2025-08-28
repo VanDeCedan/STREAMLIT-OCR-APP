@@ -76,7 +76,7 @@ def load_ocr_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_path = hf_hub_download(
         repo_id="Nicias/rec_text",
-        filename="rec_text_crnn_v1.pth"
+        filename="rec_text_crnn_v2.pth"
     )
     model = CRNN(CRNN_IMG_H, CRNN_NC, CRNN_NCLASS, CRNN_NH)
     model.load_state_dict(torch.load(model_path, map_location=device))

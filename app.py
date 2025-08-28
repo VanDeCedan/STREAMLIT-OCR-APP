@@ -80,7 +80,7 @@ if choix_mode == "Demande de paiement":
                 else:
                     pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
                     progress = st.progress(0, text="Extraction en cours...")
-                    df, total, success, failed = pipeline_module.process_images_to_excel_pil(pil_images)
+                    df, total, success, failed = pipeline_module.process_images_to_text_pil(pil_images)
                     progress.progress(100, text="Extraction terminée")
 
                     col1, col2, col3 = st.columns(3)

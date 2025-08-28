@@ -25,7 +25,7 @@ def pipeline_predict_texts_pil(pil_image):
     return fields
 
 # === Traitement batch pour Streamlit ===
-def process_images_to_excel_pil(pil_images):
+def process_images_to_text_pil(pil_images):
     results = []
     for pil_image in pil_images:
         infos = pipeline_predict_texts_pil(pil_image)
@@ -33,6 +33,14 @@ def process_images_to_excel_pil(pil_images):
             results.append(infos)
     if results:
         df = pd.DataFrame(results)
+
+        # Formater les dates d'expiration de type 'DDMMYYYY' en 'DD/MM/YYYY'
+        if 'date_expiration' in df.columns:
+            def format_date_exp(val):
+                if isinstance(val, str) and len(val) == 8 and val.isdigit():
+                    return val[:2] + '/' + val[2:4] + '/' + val[4:]
+                return val
+            df['date_expiration'] = df['date_expiration'].apply(format_date_exp)
 
         # Nettoyage colonne numero_carte : supprimer espaces
         if "numero_carte" in df.columns:
