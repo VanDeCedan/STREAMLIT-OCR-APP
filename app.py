@@ -9,7 +9,6 @@ st.title("DATA TOOLBOX")
 # Sidebar pour la sélection du mode
 image ="LogoAbmsPSI.jpg"
 st.logo(image)
-st.sidebar.title("Navigation")
 Acceuil_btn = st.sidebar.button("Accueil",icon="🏠")
 st.sidebar.text("Choisir le document à générer :")
 demand_paiement_btn = st.sidebar.button("Demande de paiement",width=200)
