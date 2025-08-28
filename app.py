@@ -44,9 +44,7 @@ if st.session_state['choix_mode'] == None:
         ### Important
         - Utiliser des images de bonne qualité (pas floues, bien éclairées).
         - Les pièces d'identité supportées sont : Carte d'identité nationale (CNI), Carte d'identité biométrique, Carte CIP, Passeport.
-        - N'utiliser que des documents dont vous avez **l'autorisation des propriétaires**.
-        ### Pour en savoir plus
-        - Contactez le DPDP de l'ABMS Maxiès AHODEKON, 01 67 52 53 49, mahodekon@abmsbj.org
+        - N'utiliser que des documents dont vous avez **l'autorisation des propriétaires**. Pour en savoir plus Contactez le DPDP de l'ABMS Maxiès AHODEKON, 01 67 52 53 49, mahodekon@abmsbj.org
     """
     )
 
