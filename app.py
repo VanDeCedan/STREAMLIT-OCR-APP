@@ -1,3 +1,11 @@
+# 🔧 Forcer le répertoire de config Ultralytics sur Streamlit Cloud
+import os
+from pathlib import Path
+
+CFG_DIR = "/tmp/Ultralytics"
+os.environ["YOLO_CONFIG_DIR"] = CFG_DIR
+Path(CFG_DIR).mkdir(parents=True, exist_ok=True)
+
 import streamlit as st
 from PIL import Image
 from src.pipeline_module import process_images_to_text_pil
