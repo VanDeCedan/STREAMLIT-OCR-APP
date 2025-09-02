@@ -139,13 +139,29 @@ elif choix_mode == "Etat de paiement":
         date_activite = st.text_input("Date de l'activité (ex: 01/09/2025)")
         date_paiement = st.text_input("Date de paiement (ex: 02/09/2025)")
 
+    # Initialiser la liste des fichiers dans la session si besoin
+    if 'etat_paiement_files' not in st.session_state:
+        st.session_state['etat_paiement_files'] = []
+
     uploaded_files = st.file_uploader("Choisissez une ou plusieurs images de pièce d'identité",
                                       type=["jpg", "jpeg", "png"],
                                       accept_multiple_files=True)
 
-    if uploaded_files:
-        st.write(f"{len(uploaded_files)} image(s) chargée(s)")
 
+    # Synchronisation suppression : si l'utilisateur retire une image de l'uploader, on la retire aussi de la session
+    if uploaded_files is not None:
+        # On ne garde que les fichiers présents dans uploaded_files
+        uploaded_names = {f.name for f in uploaded_files}
+        st.session_state['etat_paiement_files'] = [f for f in st.session_state['etat_paiement_files'] if f.name in uploaded_names]
+        # Ajout des nouveaux fichiers (évite doublons)
+        existing_names = {f.name for f in st.session_state['etat_paiement_files']}
+        new_files = [f for f in uploaded_files if f.name not in existing_names]
+        st.session_state['etat_paiement_files'].extend(new_files)
+
+    total_files = len(st.session_state['etat_paiement_files'])
+    st.write(f"{total_files} image(s) en attente de traitement")
+
+    if total_files > 0:
         if st.button("Extraire les informations (état de paiement)"):
             if not titre_activite.strip():
                 st.error("Veuillez renseigner le titre de l'activité.")
@@ -156,7 +172,7 @@ elif choix_mode == "Etat de paiement":
             elif not date_paiement.strip():
                 st.error("Veuillez renseigner la date de paiement.")
             else:
-                pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
+                pil_images = [Image.open(f).convert("RGB") for f in st.session_state['etat_paiement_files']]
                 progress = st.progress(0, text="Extraction en cours...")
                 df, total, success, failed = process_images_to_text_pil(pil_images)
                 progress.progress(100, text="Extraction terminée")
@@ -181,6 +197,7 @@ elif choix_mode == "Etat de paiement":
                             def success_dialog():
                                 st.success("Le téléchargement a été réalisé !", icon="✅")
                             st.session_state['choix_mode'] = None
+                            st.session_state['etat_paiement_files'] = []  # Réinitialise la liste après téléchargement
                             success_dialog()
                         st.download_button(
                             label="📥 Télécharger l'état de paiement",
