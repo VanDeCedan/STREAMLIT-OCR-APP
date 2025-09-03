@@ -1,1 +1,9 @@
 libgl1
+libfreetype6-dev
+libjpeg-dev
+liblcms2-dev
+libopenjp2-7
+libtiff5
+tcl8.6
+tk8.6
+python3-tk
