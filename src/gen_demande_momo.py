@@ -34,28 +34,28 @@ def gen_momo_fr_card(df, nom_activite, demandeur, superviseur, output_xlsx="paie
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 35
 
-    # 3. Date row
+    # 2. Date row
     ws["A3"] = "DATE :"
     ws["A3"].font = label_font
     ws["B3"] = datetime.today().strftime("%d/%m/%Y")
     ws["B3"].font = value_font
     ws.row_dimensions[3].height = 15
 
-    # 4. Operateur row
+    # 3. Operateur row
     ws["A4"] = "OPERATEUR CHOISI :"
     ws["A4"].font = label_font
     ws["B4"] = "MTN"
     ws["B4"].font = value_font
     ws.row_dimensions[4].height = 15
 
-    # 5. Motif row
+    # 4. Motif row
     ws["A5"] = "MOTIF :"
     ws["A5"].font = label_font
     ws["B5"] = nom_activite
     ws["B5"].font = value_font
     ws.row_dimensions[5].height = 15
 
-    # 7. Table headers (row 7)
+    # 5. Table headers (row 7)
     table_headers = [
         "N°",
         "NOM ET PRENOMS",
@@ -113,4 +113,3 @@ def gen_momo_fr_card(df, nom_activite, demandeur, superviseur, output_xlsx="paie
 
     wb.save(output_xlsx)
     print(f"File saved as {output_xlsx}")
-

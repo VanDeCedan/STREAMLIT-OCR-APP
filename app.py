@@ -8,6 +8,12 @@ Path(CFG_DIR).mkdir(parents=True, exist_ok=True)
 
 import streamlit as st
 from PIL import Image
+
+from io import BytesIO
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+
 from src.pipeline_module import process_images_to_text_pil
 from streamlit_option_menu import option_menu
 from src.gen_demande_momo import gen_momo_fr_card
@@ -71,13 +77,27 @@ if choix_mode == "Demande de paiement":
         with col3:
             superviseur = st.text_input("Nom du superviseur")
 
+        # Initialiser la liste des fichiers dans la session si besoin
+        if 'demande_paiement_files' not in st.session_state:
+            st.session_state['demande_paiement_files'] = []
+
         uploaded_files = st.file_uploader("Choisissez une ou plusieurs images de pièce d'identité",
                                         type=["jpg", "jpeg", "png"],
                                         accept_multiple_files=True)
 
-        if uploaded_files:
-            st.write(f"{len(uploaded_files)} image(s) chargée(s)")
+        # Synchronisation suppression : si l'utilisateur retire une image de l'uploader, on la retire aussi de la session
+        if uploaded_files is not None:
+            uploaded_names = {f.name for f in uploaded_files}
+            st.session_state['demande_paiement_files'] = [f for f in st.session_state['demande_paiement_files'] if f.name in uploaded_names]
+            # Ajout des nouveaux fichiers (évite doublons)
+            existing_names = {f.name for f in st.session_state['demande_paiement_files']}
+            new_files = [f for f in uploaded_files if f.name not in existing_names]
+            st.session_state['demande_paiement_files'].extend(new_files)
 
+        total_files = len(st.session_state['demande_paiement_files'])
+        st.write(f"{total_files} image(s) en attente de traitement")
+
+        if total_files > 0:
             if st.button("Extraire les informations"):
                 if not nom_activite.strip():
                     st.error("Veuillez d'abord renseigner le titre de l'activité (motif de paiement) avant d'extraire les informations.")
@@ -86,10 +106,21 @@ if choix_mode == "Demande de paiement":
                 elif not superviseur.strip():
                     st.error("Veuillez renseigner le nom du superviseur.")
                 else:
-                    pil_images = [Image.open(f).convert("RGB") for f in uploaded_files]
+                    pil_images = [Image.open(f).convert("RGB") for f in st.session_state['demande_paiement_files']]
                     progress = st.progress(0, text="Extraction en cours...")
                     df, total, success, failed = process_images_to_text_pil(pil_images)
                     progress.progress(100, text="Extraction terminée")
+
+                    # Sélectionner les images erronées (celles pour lesquelles aucune info n'a été extraite)
+                    erronated_images = []
+                    if df is not None:
+                        # On considère comme erronées les images qui n'ont pas été gardées dans le DataFrame final
+                        if len(df) < len(pil_images):
+                            # On suppose que l'ordre est conservé : on compare les index gardés
+                            valid_indexes = set(df.index)
+                            erronated_images = [img for i, img in enumerate(pil_images) if i not in valid_indexes]
+                    else:
+                        erronated_images = pil_images
 
                     col1, col2, col3 = st.columns(3)
                     with col1:
@@ -99,31 +130,85 @@ if choix_mode == "Demande de paiement":
                     with col3:
                         st.warning(f"Erronés : {failed}")
 
+                    # Générer le PDF des images erronées si besoin
+                    pdf_bytes = None
+                    if erronated_images:
+                        pdf_buffer = BytesIO()
+                        c = canvas.Canvas(pdf_buffer, pagesize=A4)
+                        width, height = A4
+                        for img in erronated_images:
+                            # Redimensionner l'image pour tenir dans la page
+                            img_io = BytesIO()
+                            img.save(img_io, format='PNG')
+                            img_io.seek(0)
+                            image_reader = ImageReader(img_io)
+                            iw, ih = img.size
+                            scale = min(width / iw, height / ih) * 0.9
+                            new_w, new_h = iw * scale, ih * scale
+                            x = (width - new_w) / 2
+                            y = (height - new_h) / 2
+                            c.drawImage(image_reader, x, y, width=new_w, height=new_h)
+                            c.showPage()
+                        c.save()
+                        pdf_bytes = pdf_buffer.getvalue()
+
+                    # Affichage des résultats et boutons de téléchargement
                     if df is not None and not df.empty:
-                        # Modifier les noms de colonnes de df avec la premiere lettre en majuscule et les underscores en espaces
                         df1 = df.copy() # faire une copie de df
                         df1.columns = [col.replace('_', ' ').capitalize() for col in df.columns]
                         st.dataframe(df1)
                         output_xlsx = "paiement.xlsx"
                         gen_momo_fr_card(df, nom_activite, demandeur, superviseur, output_xlsx)
 
-                        with open(output_xlsx, "rb") as f:
-                            def demand_payment_callback():
-                                @st.dialog("Success")
-                                def success_dialog():
-                                    st.success("Le téléchargement a été réalisé !", icon="✅")
-                                st.session_state['choix_mode'] = None
-                                success_dialog()
+                        from io import BytesIO
+                        import zipfile
+                        def demand_payment_callback():
+                            @st.dialog("Success")
+                            def success_dialog():
+                                st.success("Le téléchargement a été réalisé !", icon="✅")
+                            st.session_state['choix_mode'] = None
+                            st.session_state['demande_paiement_files'] = []  # Réinitialise la liste après téléchargement
+                            success_dialog()
+
+                        if pdf_bytes:
+                            # Créer un zip avec le xlsx et le pdf
+                            zip_buffer = BytesIO()
+                            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                                with open(output_xlsx, "rb") as f:
+                                    zf.writestr("paiement.xlsx", f.read())
+                                zf.writestr("images_erronees.pdf", pdf_bytes)
+                            zip_buffer.seek(0)
                             st.download_button(
-                                label="📥 Télécharger la demande de paiement",
-                                data=f,
-                                file_name=output_xlsx,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                label="📥 Télécharger la demande de paiement + images erronées",
+                                data=zip_buffer,
+                                file_name="resultats_demande_paiement.zip",
+                                mime="application/zip",
                                 on_click=demand_payment_callback
                             )
-
+                        else:
+                            with open(output_xlsx, "rb") as f:
+                                st.download_button(
+                                    label="📥 Télécharger la demande de paiement",
+                                    data=f,
+                                    file_name=output_xlsx,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    on_click=demand_payment_callback
+                                )
                     else:
                         st.warning("Aucune information n'a pu être extraite des images chargées.")
+                        if pdf_bytes:
+                            from io import BytesIO
+                            import zipfile
+                            zip_buffer = BytesIO()
+                            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                                zf.writestr("images_erronees.pdf", pdf_bytes)
+                            zip_buffer.seek(0)
+                            st.download_button(
+                                label="📥 Télécharger les images erronées",
+                                data=zip_buffer,
+                                file_name="images_erronees.zip",
+                                mime="application/zip"
+                            )
 
         elif demande_options == "Utiliser une liste de présence":
             st.subheader("Extraction sur une liste de présence")
@@ -144,8 +229,8 @@ elif choix_mode == "Etat de paiement":
         st.session_state['etat_paiement_files'] = []
 
     uploaded_files = st.file_uploader("Choisissez une ou plusieurs images de pièce d'identité",
-                                      type=["jpg", "jpeg", "png"],
-                                      accept_multiple_files=True)
+                                    type=["jpg", "jpeg", "png"],
+                                    accept_multiple_files=True)
 
 
     # Synchronisation suppression : si l'utilisateur retire une image de l'uploader, on la retire aussi de la session
@@ -177,6 +262,15 @@ elif choix_mode == "Etat de paiement":
                 df, total, success, failed = process_images_to_text_pil(pil_images)
                 progress.progress(100, text="Extraction terminée")
 
+                # Sélectionner les images erronées (celles pour lesquelles aucune info n'a été extraite)
+                erronated_images = []
+                if df is not None:
+                    if len(df) < len(pil_images):
+                        valid_indexes = set(df.index)
+                        erronated_images = [img for i, img in enumerate(pil_images) if i not in valid_indexes]
+                else:
+                    erronated_images = pil_images
+
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     st.info(f"Total images analysées : {total}")
@@ -185,26 +279,82 @@ elif choix_mode == "Etat de paiement":
                 with col3:
                     st.warning(f"Erronés : {failed}")
 
+                # Générer le PDF des images erronées si besoin
+                pdf_bytes = None
+                if erronated_images:
+                    from io import BytesIO
+                    from reportlab.pdfgen import canvas
+                    from reportlab.lib.pagesizes import A4
+                    from reportlab.lib.utils import ImageReader
+                    pdf_buffer = BytesIO()
+                    c = canvas.Canvas(pdf_buffer, pagesize=A4)
+                    width, height = A4
+                    for img in erronated_images:
+                        img_io = BytesIO()
+                        img.save(img_io, format='PNG')
+                        img_io.seek(0)
+                        image_reader = ImageReader(img_io)
+                        iw, ih = img.size
+                        scale = min(width / iw, height / ih) * 0.9
+                        new_w, new_h = iw * scale, ih * scale
+                        x = (width - new_w) / 2
+                        y = (height - new_h) / 2
+                        c.drawImage(image_reader, x, y, width=new_w, height=new_h)
+                        c.showPage()
+                    c.save()
+                    pdf_bytes = pdf_buffer.getvalue()
+
+                # Affichage des résultats et bouton de téléchargement unique
+                from io import BytesIO
+                import zipfile
+                def etat_paiement_callback():
+                    @st.dialog("Success")
+                    def success_dialog():
+                        st.success("Le téléchargement a été réalisé !", icon="✅")
+                    st.session_state['choix_mode'] = None
+                    st.session_state['etat_paiement_files'] = []  # Réinitialise la liste après téléchargement
+                    success_dialog()
+
                 if df is not None and not df.empty:
                     df1 = df.copy()
                     df1.columns = [col.replace('_', ' ').capitalize() for col in df.columns]
                     st.dataframe(df1)
                     output_xlsx = "etat_paiement.xlsx"
                     create_etat_paiement_xlsx(df, output_xlsx, titre_activite, date_activite, lieu_activite, date_paiement)
-                    with open(output_xlsx, "rb") as f:
-                        def etat_paiement_callback():
-                            @st.dialog("Success")
-                            def success_dialog():
-                                st.success("Le téléchargement a été réalisé !", icon="✅")
-                            st.session_state['choix_mode'] = None
-                            st.session_state['etat_paiement_files'] = []  # Réinitialise la liste après téléchargement
-                            success_dialog()
+
+                    if pdf_bytes:
+                        zip_buffer = BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w") as zf:
+                            with open(output_xlsx, "rb") as f:
+                                zf.writestr("etat_paiement.xlsx", f.read())
+                            zf.writestr("images_erronees.pdf", pdf_bytes)
+                        zip_buffer.seek(0)
                         st.download_button(
-                            label="📥 Télécharger l'état de paiement",
-                            data=f,
-                            file_name=output_xlsx,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            label="📥 Télécharger l'état de paiement + images erronées",
+                            data=zip_buffer,
+                            file_name="resultats_etat_paiement.zip",
+                            mime="application/zip",
                             on_click=etat_paiement_callback
                         )
+                    else:
+                        with open(output_xlsx, "rb") as f:
+                            st.download_button(
+                                label="📥 Télécharger l'état de paiement",
+                                data=f,
+                                file_name=output_xlsx,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                on_click=etat_paiement_callback
+                            )
                 else:
                     st.warning("Aucune information n'a pu être extraite des images chargées.")
+                    if pdf_bytes:
+                        zip_buffer = BytesIO()
+                        with zipfile.ZipFile(zip_buffer, "w") as zf:
+                            zf.writestr("images_erronees.pdf", pdf_bytes)
+                        zip_buffer.seek(0)
+                        st.download_button(
+                            label="📥 Télécharger les images erronées",
+                            data=zip_buffer,
+                            file_name="images_erronees.zip",
+                            mime="application/zip"
+                        )
